@@ -5,6 +5,10 @@ JavaScript plus its AST features and emits an **obfuscation plan** (JSON); a det
 engine** applies the plan; and every result is proven behavior-preserving by a **differential test**
 on 50 argument sets before it is accepted.
 
+## Model:
+
+https://huggingface.co/doryno/NeuroObfuscator-ai
+
 You control the result with a single knob — **target intensity** (`light` / `medium` / `heavy`) —
 which the model was explicitly trained to obey in the *content* of the plan, not just in its label.
 
