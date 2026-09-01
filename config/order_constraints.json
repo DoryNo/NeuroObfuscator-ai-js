@@ -1,0 +1,3 @@
+{
+  "canonical_order": ["rename", "string_encode", "operator_sub", "dead_code", "opaque_predicates"]
+}

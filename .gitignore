@@ -1,0 +1,14 @@
+node_modules/
+__pycache__/
+*.pyc
+data/
+tmp/
+reports/
+models/
+*.gguf
+*.safetensors
+*.zip
+.ipynb_checkpoints/
+checkpoints/
+adapters*/
+wheels/

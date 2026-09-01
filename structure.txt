@@ -1,0 +1,599 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        NEUROOBFUSCATOR                                  │
+│                                                                         │
+│  ┌───────────────┐   ┌───────────────┐   ┌──────────────────────────┐  │
+│  │   SUBSYSTEM A │   │   SUBSYSTEM B │   │      SUBSYSTEM C         │  │
+│  │   DATASET     │──▶│   ML MODEL    │──▶│   TRANSFORM ENGINE       │  │
+│  │   GENERATOR   │   │   (CodeLlama) │   │   (Babel)                │  │
+│  │               │   │               │   │                          │  │
+│  │  Локальный ПК │   │  Colab + GPU  │   │  Локальный ПК            │  │
+│  │  CPU + Node.js│   │  Unsloth QLoRA│   │  Node.js                 │  │
+│  └───────┬───────┘   └───────┬───────┘   └────────────┬─────────────┘  │
+│          │                   │                        │                 │
+│          ▼                   ▼                        ▼                 │
+│  ┌───────────────┐   ┌───────────────┐   ┌──────────────────────────┐  │
+│  │   SUBSYSTEM D │   │   SUBSYSTEM E │   │      SUBSYSTEM F         │  │
+│  │   EVALUATION  │   │   DEMO UI     │   │   ADAPTIVE RESOURCE      │  │
+│  │   & METRICS   │   │   (Gradio)    │   │   MANAGER                │  │
+│  │               │   │               │   │                          │  │
+│  │  Локальный ПК │   │  Локальный ПК │   │  Локальный ПК            │  │
+│  │  Python       │   │  Python       │   │  Python                  │  │
+│  └───────────────┘   └───────────────┘   └──────────────────────────┘  │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+Подсистема A: Генератор датасета
+Ответственность
+Собрать чистый JS-код, сгенерировать для него планы обфускации, применить трансформации, проверить работоспособность и упаковать в формат для обучения модели.
+Где работает
+Локальный ПК. CPU + Node.js + Python. GPU не нужен.
+Внутренняя структура
+SUBSYSTEM A: DATASET GENERATOR
+│
+├── A1. COLLECTOR (Сборщик)
+│   ├── Что делает: Скачивает JS-код из GitHub, npm, LeetCode
+│   ├── Вход: Список репозиториев / npm-пакетов
+│   ├── Выход: data/raw/*.js (сырые файлы)
+│   ├── Технология: Python (requests, subprocess, git)
+│   └── Файл: scripts/01_collect.py
+│
+├── A2. FILTER (Фильтр)
+│   ├── Что делает: Парсит каждый файл, извлекает отдельные функции,
+│   │               отбрасывает мусор (слишком короткие, длинные,
+│   │               минифицированные, с JSX/TS)
+│   ├── Вход: data/raw/*.js
+│   ├── Выход: data/filtered/functions.jsonl
+│   ├── Технология: Node.js (@babel/parser)
+│   ├── Критерии:
+│   │   ├── Функция 3–80 строк
+│   │   ├── Есть хотя бы 1 ветвление или цикл
+│   │   ├── Средняя длина строки < 120 символов
+│   │   └── Нет синтаксических ошибок
+│   └── Файл: scripts/02_filter.py + engine/extract_functions.js
+│
+├── A3. FEATURE EXTRACTOR (Извлекатель признаков)
+│   ├── Что делает: Для каждой функции извлекает AST-признаки:
+│   │               глубина дерева, число ветвлений, циклов, строк,
+│   │               цикломатическая сложность, распределение операторов
+│   ├── Вход: data/filtered/functions.jsonl
+│   ├── Выход: data/filtered/features.jsonl
+│   ├── Технология: Node.js (@babel/traverse)
+│   └── Файл: scripts/03_extract_features.py + engine/extract_features.js
+│
+├── A4. PLAN GENERATOR (Генератор планов)
+│   ├── Что делает: Для каждой функции генерирует N случайных
+│   │               комбинаций трансформаций (планов) с учётом
+│   │               структуры кода (нет циклов → не предлагать loop_transform)
+│   ├── Вход: data/filtered/features.jsonl
+│   ├── Выход: data/candidates/plans.jsonl
+│   ├── Технология: Python (random, топологическая сортировка)
+│   ├── Параметры:
+│   │   ├── N = 5–10 планов на функцию
+│   │   ├── Интенсивность зависит от cyclomatic_complexity
+│   │   └── Порядок трансформаций учитывает зависимости
+│   └── Файл: scripts/04_generate_plans.py
+│
+├── A5. TRANSFORM APPLIER (Применитель трансформаций)
+│   ├── Что делает: Берёт чистый код + план → применяет трансформации
+│   │               через Babel → получает обфусцированный код
+│   ├── Вход: функция + JSON-план
+│   ├── Выход: обфусцированный код
+│   ├── Технология: Node.js (@babel/traverse, @babel/generator)
+│   ├── Вызывает: SUBSYSTEM C (Transform Engine)
+│   └── Файл: scripts/05_apply_and_validate.py + engine/apply_plan.js
+│
+├── A6. VALIDATOR (Валидатор)
+│   ├── Что делает: Генерирует unit-тесты для оригинальной функции,
+│   │               прогоняет их на обфусцированной версии.
+│   │               Не прошли? → кандидат отбрасывается.
+│   ├── Вход: оригинальный код + обфусцированный код
+│   ├── Выход: tests_passed: true/false
+│   ├── Технология: Node.js (node --test или Jest)
+│   └── Файл: scripts/05_apply_and_validate.py + engine/test_runner.js
+│
+├── A7. SCORER (Оценщик)
+│   ├── Что делает: Для каждого валидного кандидата считает метрики:
+│   │               прирост энтропии, сложности, размера кода.
+│   │               Выбирает лучший план для каждой функции.
+│   ├── Вход: metrics до/после обфускации
+│   ├── Выход: data/candidates/scored.jsonl
+│   ├── Технология: Python (math, numpy)
+│   ├── Формула:
+│   │   score = entropy_gain * 0.25 + complexity_gain * 0.25
+│   │         + size_ratio * 0.10 + deobf_resistance * 0.40
+│   └── Файл: scripts/06_score_and_select.py
+│
+├── A8. FORMATTER (Форматировщик)
+│   ├── Что делает: Конвертирует отобранные пары в формат
+│   │               instruction fine-tuning для CodeLlama:
+│   │               system + input + output
+│   ├── Вход: data/candidates/scored.jsonl (лучшие)
+│   ├── Выход: data/final/formatted.jsonl
+│   ├── Технология: Python (json)
+│   └── Файл: scripts/07_format_for_training.py
+│
+└── A9. SPLITTER (Разделитель)
+    ├── Что делает: Делит датасет на train/val/test (80/10/10)
+    │               со стратификацией по AST-признакам
+    ├── Вход: data/final/formatted.jsonl
+    ├── Выход: data/final/train.jsonl, val.jsonl, test.jsonl
+    ├── Технология: Python (sklearn или ручной split)
+    └── Файл: scripts/08_split_dataset.py
+    Поток данных внутри Подсистемы A
+    GitHub/npm/LeetCode
+        │
+        ▼
+   ┌─────────┐     ┌─────────┐     ┌──────────┐
+   │ A1      │────▶│ A2      │────▶│ A3       │
+   │ COLLECT │     │ FILTER  │     │ FEATURES │
+   │ 100K+   │     │ 40K     │     │ 40K      │
+   │ файлов  │     │ функций │     │ + признаки│
+   └─────────┘     └─────────┘     └────┬─────┘
+                                         │
+                                         ▼
+                                    ┌──────────┐
+                                    │ A4       │
+                                    │ PLANS    │
+                                    │ 200–400K │
+                                    │ кандидатов│
+                                    └────┬─────┘
+                                         │
+                              ┌──────────┴──────────┐
+                              ▼                      ▼
+                         ┌──────────┐          ┌──────────┐
+                         │ A5       │          │ A6       │
+                         │ APPLY    │─────────▶│ VALIDATE │
+                         │ Babel    │          │ Тесты    │
+                         └──────────┘          └────┬─────┘
+                                                    │
+                                                    ▼
+                                               ┌──────────┐
+                                               │ A7       │
+                                               │ SCORE    │
+                                               │ 40K      │
+                                               │ лучших   │
+                                               └────┬─────┘
+                                                    │
+                                         ┌──────────┴──────────┐
+                                         ▼                      ▼
+                                    ┌──────────┐          ┌──────────┐
+                                    │ A8       │          │ A9       │
+                                    │ FORMAT   │─────────▶│ SPLIT    │
+                                    │ CodeLlama│          │ 80/10/10 │
+                                    └──────────┘          └──────────┘
+                                                               │
+                                                               ▼
+                                                    train.jsonl  val.jsonl  test.jsonl
+                                                    → Google Drive → Colab
+Подсистема B: ML-модель
+Ответственность
+Принять решение: какие трансформации применить, в каком порядке, с какой интенсивностью. Это «мозг» системы.
+Где работает
+Обучение: Colab Pro, T4 16GB, Unsloth + QLoRA.
+Инференс: Colab или локальный ПК (с ограничениями, см. ниже).
+Внутренняя структура
+SUBSYSTEM B: ML MODEL
+│
+├── B1. TOKENIZER (Токенизатор)
+│   ├── Что делает: Превращает текст (промпт + код) в токены
+│   ├── Модель: CodeLlama tokenizer
+│   ├── max_length: 2048 токенов
+│   └── Специальные токены: <s>, </s>, [INST], <<SYS>>
+│
+├── B2. BASE MODEL (Базовая модель)
+│   ├── Что делает: Языковая модель, предсказывает следующий токен
+│   ├── Модель: CodeLlama 7B
+│   ├── Квантизация: INT4 (NF4)
+│   ├── Заморожена: Да (обучаются только LoRA адаптеры)
+│   └── VRAM: ~3.8 GB
+│
+├── B3. LoRA ADAPTERS (Адаптеры)
+│   ├── Что делает: Дозвуковое дообучение без изменения весов базовой модели
+│   ├── Ранг: r=32
+│   ├── Alpha: 64
+│   ├── Target modules: q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
+│   ├── Обучаемые параметры: ~33M из 6.7B (0.5%)
+│   └── VRAM: ~0.8 GB
+│
+├── B4. PLAN GENERATOR (Генератор плана)
+│   ├── Что делает: По токенизированному входу генерирует JSON-план
+│   ├── Температура: 0.1 (детерминированный) или 0.7 (для демо)
+│   ├── max_new_tokens: 512
+│   └── Выход: строка текста → парсится в JSON
+│
+└── B5. PLAN VALIDATOR (Валидатор плана)
+    ├── Что делает: Проверяет сгенерированный JSON на валидность
+    ├── Проверки:
+    │   ├── JSON парсится
+    │   ├── Соответствует JSON Schema
+    │   ├── Все трансформации существуют
+    │   ├── Порядок корректен (rename первый, flatten последний)
+    │   ├── Включённые трансформации есть в order
+    │   └── Нет нерелевантных трансформаций (loop_transform без циклов)
+    ├── При ошибке: повторная генерация (до 3 попыток)
+    └── Fallback: дефолтный план
+Формат входа и выхода модели
+ВХОД (what model sees):
+┌─────────────────────────────────────────────┐
+│ [INST] <<SYS>>                              │
+│ You are NeuroObfuscator...                  │  ← Системный промпт
+│ AVAILABLE TRANSFORMATIONS: ...              │     (константа)
+│ RULES: ...                                  │
+│ <</SYS>>                                    │
+│                                             │
+│ === CODE ===                                │
+│ function calc(price, tier) { ... }          │  ← Код пользователя
+│ === END CODE ===                            │
+│                                             │
+│ === AST FEATURES ===                        │
+│ {"branch_count":2,"loop_count":0,...}       │  ← AST-признаки
+│ === END AST FEATURES ===                    │
+│                                             │
+│ Generate the obfuscation plan JSON: [/INST] │
+└─────────────────────────────────────────────┘
+
+ВЫХОД (what model generates):
+┌─────────────────────────────────────────────┐
+│ {                                           │
+│   "seed": 84729,                            │
+│   "intensity": "heavy",                     │
+│   "transforms": {                           │
+│     "rename": {"enabled":true,...},         │
+│     "string_encode": {"enabled":true,...},  │
+│     "control_flow_flatten": {...}           │
+│   },                                        │
+│   "order": ["rename","string_encode",...],  │
+│   "scope_overrides": {}                     │
+│ }                                           │
+└─────────────────────────────────────────────┘
+Подсистема C: Движок трансформаций
+Ответственность
+Физически изменить код according to плану. Это «руки» системы. Модель думает, движок делает.
+Где работает
+Локальный ПК. Node.js. Используется и при генерации датасета, и при инференсе.
+Внутренняя структура
+SUBSYSTEM C: TRANSFORM ENGINE
+│
+├── C0. PLAN EXECUTOR (Исполнитель плана)
+│   ├── Что делает: Читает JSON-план, вызывает трансформации
+│   │               в правильном порядке, передаёт AST между ними
+│   ├── Вход: чистый код + JSON-план
+│   ├── Выход: обфусцированный код
+│   ├── Технология: Node.js
+│   └── Файл: engine/apply_plan.js
+│
+├── C1. RENAME (Переименование)
+│   ├── Что делает: Заменяет идентификаторы на нечитаемые токены
+│   ├── AST-узлы: Identifier, VariableDeclarator, FunctionDeclaration
+│   ├── Параметры: style (hex|underscore|unicode|random), scope, keep[]
+│   ├── Пример: calc → _0x3f2a, price → _0x1b2c
+│   └── Файл: engine/transforms/rename.js
+│
+├── C2. STRING ENCODE (Кодирование строк)
+│   ├── Что делает: Заменяет строковые литералы на закодированные версии
+│   ├── AST-узлы: StringLiteral, TemplateLiteral
+│   ├── Параметры: method (hex|base64|charcode_array|reverse), min_length
+│   ├── Пример: "gold" → String.fromCharCode(103,111,108,100)
+│   └── Файл: engine/transforms/string_encode.js
+│
+├── C3. DEAD CODE (Мёртвый код)
+│   ├── Что делает: Вставляет ветки кода, которые никогда не выполняются
+│   ├── AST-узлы: IfStatement (test: false), BlockStatement
+│   ├── Параметры: count, types[], realism
+│   ├── Пример: if(false){console.log("trap")}
+│   └── Файл: engine/transforms/dead_code.js
+│
+├── C4. OPERATOR SUB (Замена операторов)
+│   ├── Что делает: Заменяет простые операторы на эквивалентные сложные
+│   ├── AST-узлы: BinaryExpression, LogicalExpression
+│   ├── Параметры: substitutions (map)
+│   ├── Пример: a+b → a-(-b), a===b → typeof a===typeof b && a==b
+│   └── Файл: engine/transforms/operator_sub.js
+│
+├── C5. OPAQUE PREDICATES (Непрозрачные предикаты)
+│   ├── Что делает: Вставляет условия, которые всегда true/false,
+│   │               но выглядят сложно
+│   ├── AST-узлы: IfStatement, ConditionalExpression
+│   ├── Параметры: count, complexity, always_true_ratio
+│   ├── Пример: if((x*x+x)%2===0){...} // всегда true
+│   └── Файл: engine/transforms/opaque_predicates.js
+│
+├── C6. LOOP TRANSFORM (Трансформация циклов)
+│   ├── Что делает: Меняет тип цикла или разворачивает в рекурсию
+│   ├── AST-узлы: ForStatement, WhileStatement, DoWhileStatement
+│   ├── Параметры: from, to, unroll_small_loops, unroll_threshold
+│   ├── Пример: for(;;) → while(true){switch(state){...}}
+│   └── Файл: engine/transforms/loop_transform.js
+│
+├── C7. CONTROL FLOW FLATTEN (Уплощение потока)
+│   ├── Что делает: Превращает if/else цепочки в switch-based state machine
+│   ├── AST-узлы: IfStatement → SwitchStatement + WhileStatement
+│   ├── Параметры: min_branches, state_var_style, shuffle_states
+│   ├── Пример: if/else → var _s=0x1a; while(true){switch(_s){...}}
+│   └── Файл: engine/transforms/control_flow_flatten.js
+│
+├── C8. INLINE FUNCTIONS (Встраивание функций)
+│   ├── Что делает: Заменяет вызов маленькой функции на её тело
+│   ├── AST-узлы: CallExpression → тело FunctionDeclaration
+│   ├── Параметры: max_body_length, exclude[]
+│   └── Файл: engine/transforms/inline_functions.js
+│
+├── C9. ARRAY WRAPPER (Обёртка доступа)
+│   ├── Что делает: Заменяет доступ к свойствам на индексацию через массив
+│   ├── AST-узлы: MemberExpression
+│   ├── Параметры: target[], shuffle_indices
+│   ├── Пример: obj.name → obj[_props[0]]
+│   └── Файл: engine/transforms/array_wrapper.js
+│
+└── C10. SELF DEFENDING (Самозащита)
+    ├── Что делает: Добавляет проверки целостности кода
+    ├── AST-узлы: Вставка в начало функции
+    ├── Параметры: methods[] (format_check, debug_trap)
+    └── Файл: engine/transforms/self_defending.js
+Порядок применения трансформаций
+Порядок ВАЖЕН. Зависимости:
+
+rename ──────────────────────────────────────────────────────┐
+  │                                                          │
+  ├── string_encode (после rename, чтобы не переименовать    │
+  │                  переменные внутри закодированных строк) │
+  │                                                          │
+  ├── array_wrapper (после rename)                           │
+  │                                                          │
+  ├── operator_sub (после rename)                            │
+  │                                                          │
+  ├── opaque_predicates (после rename)                       │
+  │                                                          │
+  ├── dead_code (после rename + string_encode)               │
+  │                                                          │
+  ├── loop_transform (после rename)                          │
+  │                                                          │
+  ├── inline_functions (до flatten, чтобы не раздувать       │
+  │                     state machine)                       │
+  │                                                          │
+  ├── control_flow_flatten (после всех, кроме self_defending)│
+  │                                                          │
+  └── self_defending (ВСЕГДА последний) ─────────────────────┘
+
+Подсистема D: Оценка и метрики
+Ответственность
+Измерить, насколько хорошо обфускация работает. Это «совесть» системы — без неё вы не можете доказать, что защита эффективна.
+Где работает
+Локальный ПК. Python + Node.js.
+Внутренняя структура
+SUBSYSTEM D: EVALUATION
+│
+├── D1. SYNTAX METRICS (Синтаксические метрики)
+│   ├── Cyclomatic Complexity (до/после)
+│   ├── AST Depth (до/после)
+│   ├── Token Count (до/после)
+│   ├── Code Size в байтах (до/после)
+│   └── Технология: @babel/parser, Python
+│
+├── D2. ENTROPY METRICS (Метрики энтропии)
+│   ├── Shannon Entropy токенов (до/после)
+│   ├── Identifier Entropy (разнообразие имён)
+│   ├── String Entropy (закодированность строк)
+│   └── Технология: Python (math.log2)
+│
+├── D3. DEOBFUSCATION RESISTANCE (Стойкость к деобфускации)
+│   ├── Что делает: Пытается деобфусцировать код с помощью LLM
+│   │               (GPT-4, Llama, или ваша же модель)
+│   ├── Промпт: "Make this code readable"
+│   ├── Метрика: Если LLM не смог восстановить логику → score 1.0
+│   │            Если смог → score 0.0
+│   └── Технология: Python (API call или локальный инференс)
+│
+├── D4. PERFORMANCE IMPACT (Влияние на производительность)
+│   ├── Что делает: Замеряет время выполнения оригинального
+│   │               и обфусцированного кода
+│   ├── Метрика: overhead % = (time_obf - time_orig) / time_orig * 100
+│   ├── Цель: overhead < 20% для light, < 100% для heavy
+│   └── Технология: Node.js (performance.now())
+│
+└── D5. REPORT GENERATOR (Генератор отчёта)
+    ├── Что делает: Собирает все метрики в единый отчёт
+    ├── Выход: JSON + графики (matplotlib)
+    └── Файл: scripts/evaluate.py
+Формула интегрального score
+score = 0.25 × entropy_gain_normalized
+      + 0.25 × complexity_gain_normalized
+      + 0.10 × size_ratio_normalized
+      + 0.40 × deobfuscation_resistance
+
+где:
+  entropy_gain_normalized = (H_after - H_before) / 8.0
+  complexity_gain_normalized = min((CC_after - CC_before) / 20.0, 1.0)
+  size_ratio_normalized = min(size_after / size_before, 10.0) / 10.0
+  deobfuscation_resistance ∈ [0.0, 1.0]
+  Подсистема E: Демо-приложение
+Ответственность
+Показать проект миру. Веб-интерфейс, визуализация, интерактивность.
+Где работает
+Локальный ПК (Gradio) или Colab (Gradio + share=True).
+Внутренняя структура
+SUBSYSTEM E: DEMO UI
+│
+├── E1. CODE INPUT (Ввод кода)
+│   ├── Что делает: Текстовое поле для вставки JS-кода
+│   ├── Подсветка синтаксиса: Monaco Editor или CodeMirror
+│   └── Валидация: проверка синтаксиса перед отправкой
+│
+├── E2. AST VISUALIZER (Визуализатор AST)
+│   ├── Что делает: Показывает дерево AST исходного кода
+│   ├── Зачем: Demonstrates that you understand code structure
+│   └── Технология: @babel/parser → JSON → дерево
+│
+├── E3. PLAN DISPLAY (Отображение плана)
+│   ├── Что делает: Показывает JSON-план, сгенерированный моделью
+│   ├── Подсветка: какие трансформации включены, порядок
+│   └── Интерактивность: можно вручную отключить трансформацию
+│
+├── E4. BEFORE / AFTER (Сравнение кода)
+│   ├── Что делает: Side-by-side сравнение чистого и обфусцированного кода
+│   ├── Подсветка синтаксиса
+│   └── Подсветка изменений (diff view)
+│
+├── E5. METRICS DASHBOARD (Дашборд метрик)
+│   ├── Что делает: Показывает метрики до/после
+│   ├── Графики: entropy, complexity, size
+│   └── Интегральный score
+│
+├── E6. DEOBFUSCATION ATTACK (Атака деобфускацией)
+│   ├── Что делает: Кнопка "Попробовать деобфусцировать"
+│   ├── Прогоняет обфусцированный код через LLM
+│   └── Показывает результат (обычно мусор)
+│
+└── E7. RESOURCE MONITOR (Монитор ресурсов)
+    ├── Что делает: Показывает, сколько VRAM/RAM/CPU используется
+    ├── Зачем: Демонстрирует "smart resource management"
+    └── Технология: psutil, nvidia-smi
+    Макет UI
+    ┌─────────────────────────────────────────────────────────────────┐
+│  NeuroObfuscator                                    [GPU: 4.2GB] │
+├─────────────────────────┬───────────────────────────────────────┤
+│                         │                                       │
+│  INPUT CODE             │  OBFUSCATED CODE                      │
+│  ┌───────────────────┐  │  ┌─────────────────────────────────┐ │
+│  │ function calc(    │  │  │ var _s=[103,111,108,100];       │ │
+│  │   price, tier     │  │  │ function _0x3f2a(_0x1b,_0x2c){  │ │
+│  │ ){                │  │  │   var _st=0x1a3f,_r;             │ │
+│  │   if(tier==="gold"│  │  │   while(true){                   │ │
+│  │     return p*0.8  │  │  │     switch(_st){                 │ │
+│  │   ...             │  │  │       case 0x1a3f:               │ │
+│  │ }                 │  │  │         _st=(_0x2c===String[     │ │
+│  └───────────────────┘  │  │         ...                      │ │
+│                         │  └─────────────────────────────────┘ │
+│  [Obfuscate] [Settings] │                                       │
+│                         │                                       │
+├─────────────────────────┴───────────────────────────────────────┤
+│  PLAN: rename ✓ | string_encode ✓ | dead_code ✓ | flatten ✓    │
+│  ORDER: rename → string_encode → dead_code → flatten            │
+│  INTENSITY: heavy | SEED: 84729                                 │
+├─────────────────────────────────────────────────────────────────┤
+│  METRICS:                                                       │
+│  Entropy: 3.2 → 5.9 (+84%)  │  Complexity: 3 → 8 (+167%)       │
+│  Size: 245B → 1.8KB (+634%) │  Score: 0.87/1.0                 │
+│                                                                 │
+│  [🔓 Try Deobfuscation]  [📊 Full Report]  [💾 Download]        │
+└─────────────────────────────────────────────────────────────────┘
+Подсистема F: Адаптивный менеджер ресурсов
+Ответственность
+Показать «smart use of resources». Система адаптируется к доступному железу.
+Где работает
+Локальный ПК. Python.
+Внутренняя структура
+SUBSYSTEM F: ADAPTIVE RESOURCE MANAGER
+│
+├── F1. HARDWARE DETECTOR (Детектор железа)
+│   ├── Что делает: Определяет доступный GPU, VRAM, RAM, CPU cores
+│   ├── Технология: torch.cuda, psutil, shutil
+│   └── Выход: HardwareProfile
+│
+├── F2. STRATEGY SELECTOR (Выбор стратегии)
+│   ├── Что делает: На основе HardwareProfile выбирает:
+│   │   ├── Модель: CodeLlama 7B / StarCoder 2B / rule-based fallback
+│   │   ├── Квантизация: INT4 / INT8 / FP16
+│   │   ├── Максимальная длина контекста
+│   │   └── Batch size
+│   └── Логика:
+│       ├── VRAM ≥ 12GB → CodeLlama 7B INT4
+│       ├── VRAM ≥ 6GB  → StarCoder 2B INT4
+│       ├── VRAM < 6GB  → llama.cpp CPU
+│       └── No GPU      → rule-based обфускация (без модели)
+│
+├── F3. OBFUSCATION LEVEL ADAPTER (Адаптер уровня обфускации)
+│   ├── Что делает: Решает, какие трансформации применять
+│   │               к разным частям кода на основе их критичности
+│   ├── Логика:
+│   │   ├── Hot paths (циклы, рендеринг) → light
+│   │   ├── Auth / validation → paranoid
+│   │   └── Utility functions → medium
+│   └── Определяется по AST-признакам + эвристикам
+│
+└── F4. FALLBACK MANAGER (Менеджер отказов)
+    ├── Что делает: Если модель не сгенерировала валидный план
+    │               за 3 попытки → применяет дефолтный план
+    ├── Дефолтный план: rename + string_encode + dead_code
+    └── Логирование: записывает все ошибки для анализа
+    GPU ≥ 24GB
+Полная файловая структура проекта
+neuroobfuscator/
+│
+├── engine/                              # SUBSYSTEM C: Transform Engine
+│   ├── transforms/
+│   │   ├── rename.js
+│   │   ├── string_encode.js
+│   │   ├── dead_code.js
+│   │   ├── operator_sub.js
+│   │   ├── opaque_predicates.js
+│   │   ├── loop_transform.js
+│   │   ├── control_flow_flatten.js
+│   │   ├── inline_functions.js
+│   │   ├── array_wrapper.js
+│   │   └── self_defending.js
+│   ├── apply_plan.js                    # Исполнитель плана
+│   ├── extract_functions.js             # Извлечение функций из файлов
+│   ├── extract_features.js              # Извлечение AST-признаков
+│   ├── generate_tests.js                # Генерация unit-тестов
+│   ├── test_runner.js                   # Запуск тестов
+│   └── index.js                         # CLI entry point
+│
+├── scripts/                             # SUBSYSTEM A: Dataset Generator
+│   ├── 01_collect.py
+│   ├── 02_filter.py
+│   ├── 03_extract_features.py
+│   ├── 04_generate_plans.py
+│   ├── 05_apply_and_validate.py
+│   ├── 06_score_and_select.py
+│   ├── 07_format_for_training.py
+│   ├── 08_split_dataset.py
+│   └── evaluate.py                      # SUBSYSTEM D: Evaluation
+│
+├── training/                            # SUBSYSTEM B: ML Model
+│   ├── train_unsloth.ipynb              # Colab-ноутбук для обучения
+│   ├── inference.py                     # Локальный инференс
+│   ├── plan_validator.py                # Валидация JSON-планов
+│   └── system_prompt.txt                # Системный промпт (константа)
+│
+├── app/                                 # SUBSYSTEM E: Demo UI
+│   ├── main.py                          # Gradio-приложение
+│   ├── components/
+│   │   ├── code_input.py
+│   │   ├── plan_display.py
+│   │   ├── before_after.py
+│   │   ├── metrics_dashboard.py
+│   │   └── deobfuscation_attack.py
+│   └── static/
+│       └── style.css
+│
+├── resource_manager/                    # SUBSYSTEM F: Resource Manager
+│   ├── hardware_detector.py
+│   ├── strategy_selector.py
+│   └── fallback_manager.py
+│
+├── data/                                # Данные (генерируются)
+│   ├── raw/
+│   ├── filtered/
+│   ├── candidates/
+│   └── final/
+│       ├── train.jsonl
+│       ├── val.jsonl
+│       └── test.jsonl
+│
+├── config/
+│   ├── plan_schema.json                 # JSON Schema для планов
+│   ├── order_constraints.json           # Зависимости порядка трансформаций
+│   └── hardware_profiles.json           # Профили железа для адаптации
+│
+├── tests/                               # Тесты проекта
+│   ├── test_transforms/
+│   │   ├── test_rename.js
+│   │   ├── test_string_encode.js
+│   │   └── ...
+│   ├── test_plan_validator.py
+│   └── test_pipeline.py
+│
+├── package.json                         # Node.js зависимости
+├── requirements.txt                     # Python зависимости
+├── Makefile                             # Команды для запуска пайплайна
+└── README.md                            # Описание проекта

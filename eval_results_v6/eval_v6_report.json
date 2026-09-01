@@ -1,0 +1,36 @@
+{
+  "model": "Qwen2.5-Coder-7B q4_k_m GGUF (qwen2.5-coder-7b-instruct.Q8_0.gguf)",
+  "dataset": "final_v6/test.jsonl",
+  "prompt_style": "inst",
+  "n_test": 750,
+  "json_parse_rate": 1.0,
+  "schema_rate": 1.0,
+  "semantic_pass_rate": 0.9413333333333334,
+  "apply_ok_rate": 1.0,
+  "intensity_dist": {
+    "heavy": 350,
+    "light": 64,
+    "medium": 336
+  },
+  "unique_orders": 8,
+  "top_order_share": 0.6226666666666667,
+  "semantic_by_intensity": {
+    "light": [
+      100,
+      105
+    ],
+    "medium": [
+      276,
+      296
+    ],
+    "heavy": [
+      330,
+      349
+    ]
+  },
+  "semantic_reasons": {
+    "output_mismatch": 28,
+    "transformed_execution_error": 16
+  },
+  "wall_seconds": 1989.9
+}

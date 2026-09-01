@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seed", "intensity", "transforms", "order"],
+  "properties": {
+    "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "intensity": {"enum": ["light", "medium", "heavy"]},
+    "transforms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rename", "string_encode", "operator_sub", "dead_code", "opaque_predicates"],
+      "properties": {
+        "rename": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {"enabled": {"type": "boolean"}, "keep": {"type": "array", "items": {"type": "string"}}}
+        },
+        "string_encode": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {"enabled": {"type": "boolean"}, "method": {"enum": ["charcode_array", "charcode_concat", "hex_escape", "unicode_escape"]}, "min_length": {"type": "integer", "minimum": 1}}
+        },
+        "operator_sub": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {"enabled": {"type": "boolean"}, "rate": {"type": "number", "minimum": 0, "maximum": 1}}
+        },
+        "dead_code": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {"enabled": {"type": "boolean"}, "count": {"type": "integer", "minimum": 0, "maximum": 5}}
+        },
+        "opaque_predicates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {"enabled": {"type": "boolean"}, "count": {"type": "integer", "minimum": 0, "maximum": 3}}
+        }
+      }
+    },
+    "order": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["rename", "string_encode", "operator_sub", "dead_code", "opaque_predicates"]}
+    }
+  }
+}

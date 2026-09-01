@@ -1,0 +1,19 @@
+{
+  "model": "Qwen2.5-Coder-7B q8_0 GGUF (qwen2.5-coder-7b-instruct.q8_0.gguf)",
+  "dataset": "final_v7/test.jsonl (conditional v7.1)",
+  "n_test": 750,
+  "json_parse_rate": 1.0,
+  "schema_rate": 1.0,
+  "field_obedience_rate": 1.0,
+  "shape_obedience_rate": 1.0,
+  "light_purity": 1.0,
+  "semantic_pass_rate": 1.0,
+  "unique_orders": 10,
+  "top_non_light_order": "rename > string_encode > operator_sub > dead_code",
+  "top_non_light_order_share": 0.19,
+  "semantic_by_intensity": {
+    "light": [112, 112],
+    "medium": [355, 355],
+    "heavy": [283, 283]
+  }
+}

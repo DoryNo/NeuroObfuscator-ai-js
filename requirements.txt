@@ -1,0 +1,2 @@
+gradio>=5.0
+llama-cpp-python; platform_system != "Windows" or python_version < "3.12"
